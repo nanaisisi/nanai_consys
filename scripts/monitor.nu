@@ -1,10 +1,23 @@
-# Nushell system metrics monitor (cross-platform)
-# Collects CPU, memory, disk, and optional GPU metrics and writes NDJSON snapshots.
+# Nushell system metrics monitor (cross-platform) - Modular Architecture
+# Main orchestrator for the Nanai Consys monitoring system
+# Author: Nanai Consys Project
+# Version: 2.0.0 - Refactored with modular architecture
+# Dependencies: Collector modules, evaluator modules, interface schemas
 
+use modules/collectors/cpu-collector.nu as cpu
+use modules/collectors/memory-collector.nu as memory  
+use modules/collectors/disk-collector.nu as disk
+use modules/collectors/gpu-collector.nu as gpu
+use modules/collectors/health-assessor.nu as health
+use modules/interfaces/schemas.nu as schemas
+
+# Main monitoring orchestrator with support for AI evaluation
 export def main [
   --once        # run once and print JSON to stdout (and optionally save)
   --interval:int = 5  # seconds between samples when running as a daemon
   --log-path:path     # optional: where to write NDJSON (default: $nu.data-dir/nanai_consys/metrics.ndjson)
+  --ai-evaluate     # enable AI-based evaluation and recommendations
+  --config-path:path  # optional: path to configuration file
 ] {
   let log_path = (if ($log_path | is-empty) {
     let dir = ($nu.data-dir | path join "nanai_consys")
@@ -18,121 +31,150 @@ export def main [
     # also write a last.json for convenience
     let last_path = ($log_path | path dirname | path join "last.json")
     $snap | to json -r | save -f $last_path
+    
+    # Perform AI evaluation if requested
+    if $ai_evaluate {
+      let history = (load-recent-history $log_path 10)
+      let evaluation = (evaluate-with-ai $snap $history)
+      $evaluation | to json -r | print
+    }
+    
     return
   }
 
+  # Main monitoring loop with modular architecture
   loop {
     let snap = (collect-snapshot)
-  $snap | to json -r | save --append $log_path
-  # also refresh last.json for consumers
-  let last_path = ($log_path | path dirname | path join "last.json")
-  $snap | to json -r | save -f $last_path
-  sleep ($interval | into duration --unit sec)
+    $snap | to json -r | save --append $log_path
+    # also refresh last.json for consumers
+    let last_path = ($log_path | path dirname | path join "last.json")
+    $snap | to json -r | save -f $last_path
+    
+    # Perform periodic AI evaluation if enabled
+    if $ai_evaluate {
+      let history = (load-recent-history $log_path 10)
+      let evaluation = (evaluate-with-ai $snap $history)
+      
+      # Save evaluation results
+      let eval_path = ($log_path | path dirname | path join "evaluations.ndjson")
+      $evaluation | to json -r | save --append $eval_path
+    }
+    
+    sleep ($interval | into duration --unit sec)
   }
 }
 
-# Build one snapshot record
-def collect-snapshot [] {
-  let ts = (date now | format date "%+" )
-  let cpu = (get-cpu)
-  let mem = (get-mem)
-  let disks = (get-disks)
-  let gpu = (get-gpu)
-  let level = (assess-load $cpu $mem)
+# Build one snapshot record using modular collectors
+def collect-snapshot [] -> record {
+  let ts = (date now | format date "%+")
+  let cpu_metrics = (cpu collect-metrics)
+  let mem_metrics = (memory collect-metrics)
+  let disk_metrics = (disk collect-metrics)
+  let gpu_metrics = (gpu collect-metrics)
+  let load_level = (health assess-load $cpu_metrics $mem_metrics)
+  
   {
     timestamp: $ts,
-    level: $level,
-    cpu: $cpu,
-    mem: $mem,
-    disks: $disks,
-    gpu: $gpu
+    level: $load_level,
+    cpu: $cpu_metrics,
+    mem: $mem_metrics,
+    disks: $disk_metrics,
+    gpu: $gpu_metrics
   }
 }
 
-# Heuristic load level for quick, mechanical judgment
-# - high: any of cpu/mem >= 80%
-# - mid:  any of cpu/mem >= 50%
-# - low:  otherwise
-def assess-load [cpu_rec mem_rec] {
-  let cpu_pct = ($cpu_rec.usage_pct? | default 0 | into float)
-  let mem_pct = ($mem_rec.used_pct? | default 0 | into float)
-  if ($cpu_pct >= 80 or $mem_pct >= 80) { "high" }
-  else if ($cpu_pct >= 50 or $mem_pct >= 50) { "mid" }
-  else { "low" }
-}
-
-# CPU usage: average across logical CPUs using sys cpu -l
-def get-cpu [] {
-  let t = (sys cpu -l)
-  if (($t | length) == 0) {
-    # fallback: try aggregated record if available
-    let u = (try { (sys | get cpu | get usage) } catch { null })
-    { usage_pct: ($u | default null), per_core: null }
-  } else {
-    let per = (try { $t | select name usage } catch { $t })
-    let usages = (try { $per | get usage } catch { [] })
-    let avg = (if (($usages | length) > 0) { $usages | math avg } else { null })
-    { usage_pct: $avg, per_core: $per }
+# Load recent historical data for AI evaluation
+def load-recent-history [log_path: string, count: int] -> list {
+  try {
+    if ($log_path | path exists) {
+      open $log_path | from ndjson | last $count
+    } else {
+      []
+    }
+  } catch {
+    []
   }
 }
 
-# Memory usage percentage
-def get-mem [] {
-  let m = (sys mem)
-  let total = (try { $m.total } catch { null })
-  let used = (try { $m.used } catch { null })
-  let used2 = (if ($used | describe | str contains "nothing") { try { $m.total - $m.free } catch { null } } else { $used })
-  let pct = (if ($total != null and $used2 != null and $total != 0) { ($used2 / $total * 100) } else { null })
-  { total: $total, used: $used2, used_pct: $pct }
-}
-
-# Disk usage per mount/drive
-def get-disks [] {
-  let d = (sys disks)
-  $d | each {|it|
-    let total = (try { $it.total } catch { null })
-    let used = (try { $it.used } catch { null })
-    let used2 = (if ($used | describe | str contains "nothing") { try { $it.total - $it.free } catch { null } } else { $used })
-    let pct = (if ($total != null and $used2 != null and $total != 0) { ($used2 / $total * 100) } else { null })
+# Evaluate system with AI integration
+def evaluate-with-ai [current: record, history: list] -> record {
+  try {
+    use modules/evaluators/ai-integration.nu as ai
+    
+    # Prepare evaluation request
+    let context = (ai prepare-evaluation-context $current $history)
+    let request = {
+      metrics: $current,
+      history: $history,
+      context: $context
+    }
+    
+    # Get AI evaluation
+    let evaluation = (ai evaluate-system $request)
+    
+    # Add metadata about the evaluation
+    $evaluation | merge {
+      metadata: ($evaluation.metadata | merge {
+        evaluation_timestamp: (date now | format date "%+"),
+        system_snapshot: $current.timestamp,
+        history_points: ($history | length)
+      })
+    }
+  } catch {
+    # Fallback to basic health assessment if AI evaluation fails
+    let health_summary = (health generate-health-summary $current)
     {
-      name: (try { $it.name } catch { null }),
-      mount: (try { $it.mount } catch { null }),
-      file_system: (try { $it.file_system } catch { null }),
-      total: $total,
-      used: $used2,
-      used_pct: $pct
+      confidence: 0.5,
+      category: "health_assessment_fallback",
+      actions: [],
+      reasoning: "AI evaluation failed, using basic health assessment",
+      metadata: {
+        fallback: true,
+        health_summary: $health_summary
+      }
     }
   }
 }
 
-# GPU usage via vendor tools if available. Returns null if not found.
-def get-gpu [] {
-  if ((which nvidia-smi | length) > 0) {
-    let out = (nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits | lines)
-    let rows = ($out | each {|l|
-      let f = ($l | split row ",") | each {|x| $x | str trim }
-      let util = (try { $f.0 | into int } catch { null })
-      let mem_used = (try { $f.1 | into int } catch { null })
-      let mem_total = (try { $f.2 | into int } catch { null })
-      let mem_pct = (if ($mem_total != null and $mem_total != 0) { ($mem_used * 100 / $mem_total) } else { null })
-      { vendor: "nvidia", usage_pct: $util, mem_used_mib: $mem_used, mem_total_mib: $mem_total, mem_used_pct: $mem_pct }
-    })
-    return $rows
-  }
+# Legacy compatibility functions - Deprecated, use modular collectors instead
+# These functions are kept for backward compatibility but will be removed in future versions
 
-  if ((which rocm-smi | length) > 0) {
-  let raw = (try { rocm-smi --showuse --json } catch { null })
-    if ($raw == null) { return null }
-    # rocm-smi json varies; best-effort parse
-  let parsed = (try { $raw | from json } catch { null })
-    return $parsed
-  }
-
-  # macOS or others without vendor tools: return null
-  null
+# @deprecated Use cpu collect-metrics instead  
+def get-cpu [] {
+  use modules/collectors/cpu-collector.nu as cpu
+  cpu collect-metrics
 }
 
-# Convenience: run once and save to default path
+# @deprecated Use memory collect-metrics instead
+def get-mem [] {
+  use modules/collectors/memory-collector.nu as memory  
+  memory collect-metrics
+}
+
+# @deprecated Use disk collect-metrics instead
+def get-disks [] {
+  use modules/collectors/disk-collector.nu as disk
+  disk collect-metrics  
+}
+
+# @deprecated Use gpu collect-metrics instead
+def get-gpu [] {
+  use modules/collectors/gpu-collector.nu as gpu
+  gpu collect-metrics
+}
+
+# @deprecated Use health assess-load instead
+def assess-load [cpu_rec, mem_rec] {
+  use modules/collectors/health-assessor.nu as health
+  health assess-load $cpu_rec $mem_rec
+}
+
+# Convenience function: run once and save to default path
 export def snapshot [] {
   main --once
+}
+
+# New convenience function: run once with AI evaluation
+export def ai-snapshot [] {
+  main --once --ai-evaluate
 }
