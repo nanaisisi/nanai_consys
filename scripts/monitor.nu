@@ -1,5 +1,6 @@
 # Nushell system metrics monitor (cross-platform)
 # Collects CPU, memory, disk, and optional GPU metrics and writes NDJSON snapshots.
+#ATDS
 
 export def main [
   --once        # run once and print JSON to stdout (and optionally save)
@@ -107,25 +108,36 @@ def get-disks [] {
 
 # GPU usage via vendor tools if available. Returns null if not found.
 def get-gpu [] {
-  if ((which nvidia-smi | length) > 0) {
-    let out = (nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits | lines)
-    let rows = ($out | each {|l|
-      let f = ($l | split row ",") | each {|x| $x | str trim }
-      let util = (try { $f.0 | into int } catch { null })
-      let mem_used = (try { $f.1 | into int } catch { null })
-      let mem_total = (try { $f.2 | into int } catch { null })
-      let mem_pct = (if ($mem_total != null and $mem_total != 0) { ($mem_used * 100 / $mem_total) } else { null })
-      { vendor: "nvidia", usage_pct: $util, mem_used_mib: $mem_used, mem_total_mib: $mem_total, mem_used_pct: $mem_pct }
-    })
-    return $rows
+  # Linux: try nvtop (generic GPU monitor)
+  if ($nu.os-info.name == "linux" and (which nvtop | length) > 0) {
+    let out = (try { run-external "sh" "-c" "timeout 1 nvtop 2>/dev/null | head -20" | complete } catch { null })
+    if ($out != null and $out.exit_code == 0) {
+      let lines = ($out.stdout | lines)
+      let gpu_lines = ($lines | where {|l| $l =~ "Utilization"})
+      let rows = ($gpu_lines | each {|l|
+        # Example: GPU 0: NVIDIA GeForce RTX 3080 [Utilization: 45%]
+        let parts = ($l | split row ":")
+        if (($parts | length) >= 3) {
+          let util_str = ($parts.2 | str trim | str replace "%" "" | str replace "[" "" | str replace "]" "")
+          let util = (try { $util_str | into int } catch { null })
+          { vendor: "nvtop", usage_pct: $util, mem_used_mib: null, mem_total_mib: null, mem_used_pct: null }
+        } else { null }
+      } | where {|x| $x != null })
+      if (($rows | length) > 0) { return $rows }
+    }
   }
 
-  if ((which rocm-smi | length) > 0) {
-  let raw = (try { rocm-smi --showuse --json } catch { null })
-    if ($raw == null) { return null }
-    # rocm-smi json varies; best-effort parse
-  let parsed = (try { $raw | from json } catch { null })
-    return $parsed
+  # Windows: try DXGI-P via PowerShell command
+  if ($nu.os-info.name == "windows") {
+    let out = (try { run-external "powershell" "-Command" "Get-Counter -Counter '\\GPU Engine(*)\\Utilization Percentage' -SampleInterval 1 -MaxSamples 1 -ErrorAction Stop | ForEach-Object { $_.CounterSamples | Select-Object @{Name='usage_pct'; Expression={[math]::Round($_.CookedValue, 2)}}, @{Name='vendor'; Expression={'dxgi'}}, @{Name='mem_used_mib'; Expression={$null}}, @{Name='mem_total_mib'; Expression={$null}}, @{Name='mem_used_pct'; Expression={$null}} } | ConvertTo-Json -Compress" | complete } catch { null })
+    if ($out != null and $out.exit_code == 0 and ($out.stdout | str trim) != "") {
+      let parsed = (try { $out.stdout | from json } catch { null })
+      if ($parsed != null) {
+        # Ensure it's an array
+        let rows = (if ($parsed | describe | str contains "record") { [$parsed] } else { $parsed })
+        return $rows
+      }
+    }
   }
 
   # macOS or others without vendor tools: return null
