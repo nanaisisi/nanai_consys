@@ -1,3 +1,5 @@
+# AI 生成です。
+
 # Nanai Consys - Cross-Platform System Monitoring with AI Integration
 
 A modular, cross-platform system monitoring solution built with Nushell, featuring AI-enhanced optimization recommendations and a clean architectural design.
