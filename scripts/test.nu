@@ -1,0 +1,1 @@
+export def test [] { "hello" }

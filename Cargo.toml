@@ -3,10 +3,6 @@ name = "nanai_consys"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-
-[profile]
-
 [profile.wasm-dev]
 inherits = "dev"
 opt-level = 1
@@ -16,3 +12,6 @@ inherits = "dev"
 
 [profile.android-dev]
 inherits = "dev"
+
+[dependencies]
+windows = "0.62.2"

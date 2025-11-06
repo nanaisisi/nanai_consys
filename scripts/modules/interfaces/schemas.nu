@@ -111,16 +111,16 @@ export def context-schema [] {
 export def collector-interface [] {
     "All collectors must implement:
     
-    collect-metrics [] -> record | null
+    collect-metrics []
         - Returns metrics in the appropriate schema format
         - Returns null if collection fails
         - Must handle all errors gracefully
         
-    validate-metrics [data: record] -> bool  
+    validate-metrics [data: record]
         - Validates that collected data matches expected schema
         - Returns false for invalid data
         
-    get-collector-info [] -> record
+    get-collector-info []
         - Returns metadata about the collector
         - Includes: name, version, dependencies, supported_platforms"
 }
@@ -129,11 +129,11 @@ export def collector-interface [] {
 export def health-assessor-interface [] {
     "Health assessors must implement:
     
-    assess-load [cpu: record, mem: record] -> string
+    assess-load [cpu: record, mem: record]
         - Returns system load level: 'low', 'mid', 'high'
         - Based on CPU and memory usage patterns
         
-    assess-stability [history: list<record>] -> record
+    assess-stability [history: list<record>]
         - Analyzes system stability from historical data
         - Returns stability metrics and trends"
 }
@@ -146,16 +146,16 @@ export def health-assessor-interface [] {
 export def ai-integration-interface [] {
     "AI integrations must implement:
     
-    evaluate-system [request: record] -> record | null
+    evaluate-system [request: record]
         - Takes ai-request-schema format input
         - Returns ai-response-schema format output  
         - Returns null if AI evaluation fails
         
-    validate-response [response: record] -> bool
+    validate-response [response: record]
         - Validates AI response format and safety
         - Checks for malicious or unsafe recommendations
         
-    get-ai-info [] -> record
+    get-ai-info []
         - Returns AI backend information and capabilities"
 }
 
@@ -163,15 +163,15 @@ export def ai-integration-interface [] {
 export def data-analyzer-interface [] {
     "Data analyzers must implement:
     
-    analyze-trends [history: list<record>] -> record
+    analyze-trends [history: list<record>]
         - Identifies patterns and trends in historical data
         - Returns trend analysis and predictions
         
-    detect-anomalies [current: record, baseline: record] -> list<record>
+    detect-anomalies [current: record, baseline: record]
         - Detects anomalous system behavior
         - Returns list of detected anomalies
         
-    prepare-context [metrics: record, history: list] -> record
+    prepare-context [metrics: record, history: list]
         - Prepares context information for AI evaluation
         - Enriches data with derived insights"
 }
@@ -184,15 +184,15 @@ export def data-analyzer-interface [] {
 export def orchestrator-interface [] {
     "Orchestrators must implement:
     
-    run-monitoring-cycle [config: record] -> record
+    run-monitoring-cycle [config: record]
         - Executes one complete monitoring cycle
         - Returns cycle results and status
         
-    handle-recommendations [recs: record, config: record] -> record
+    handle-recommendations [recs: record, config: record]
         - Processes AI recommendations according to configuration
         - Returns execution results
         
-    manage-system-state [current_state: record, updates: record] -> record
+    manage-system-state [current_state: record, updates: record]
         - Updates and maintains system state
         - Returns updated state information"
 }
@@ -201,15 +201,15 @@ export def orchestrator-interface [] {
 export def config-manager-interface [] {
     "Configuration managers must implement:
     
-    load-configuration [sources: list<string>] -> record
+    load-configuration [sources: list<string>]
         - Loads configuration from multiple sources
         - Merges with appropriate precedence
         
-    validate-configuration [config: record] -> bool
+    validate-configuration [config: record]
         - Validates configuration completeness and safety
         - Returns false for invalid configurations
         
-    get-default-config [] -> record
+    get-default-config []
         - Returns system default configuration
         - Includes all required fields with safe defaults"
 }
@@ -219,35 +219,46 @@ export def config-manager-interface [] {
 # =============================================================================
 
 # Validate metrics against schema
-export def validate-cpu-metrics [data: record] -> bool {
-    ($data | columns | "usage_pct" in $in) and 
-    ($data | columns | "per_core" in $in) and
-    (($data.usage_pct | describe) == "float") and
-    (($data.per_core | describe) == "list")
+export def validate-cpu-metrics [data: record] {
+    let conditions = [
+        "usage_pct" in ($data | columns),
+        "per_core" in ($data | columns),
+        ($data.usage_pct | describe) == "float",
+        ($data.per_core | describe) == "list"
+    ]
+    $conditions | all {|c| $c}
 }
 
-export def validate-memory-metrics [data: record] -> bool {
-    ($data | columns | "total" in $in) and 
-    ($data | columns | "used" in $in) and
-    ($data | columns | "used_pct" in $in) and
-    (($data.total | describe) == "int") and
-    (($data.used | describe) == "int") and
-    (($data.used_pct | describe) == "float")
+export def validate-memory-metrics [data: record] {
+    let conditions = [
+        "total" in ($data | columns),
+        "used" in ($data | columns),
+        "used_pct" in ($data | columns),
+        ($data.total | describe) == "int",
+        ($data.used | describe) == "int",
+        ($data.used_pct | describe) == "float"
+    ]
+    $conditions | all {|c| $c}
 }
 
-export def validate-system-snapshot [data: record] -> bool {
+export def validate-system-snapshot [data: record] {
     let required_fields = ["timestamp", "level", "cpu", "mem", "disks"]
-    ($required_fields | all {|field| $field in ($data | columns)}) and
-    (validate-cpu-metrics $data.cpu) and
-    (validate-memory-metrics $data.mem) and
-    ($data.level in ["low", "mid", "high"])
+    let conditions = [
+        $required_fields | all {|field| $field in ($data | columns)},
+        validate-cpu-metrics $data.cpu,
+        validate-memory-metrics $data.mem,
+        $data.level in ["low", "mid", "high"]
+    ]
+    $conditions | all {|c| $c}
 }
 
-export def validate-ai-response [data: record] -> bool {
+export def validate-ai-response [data: record] {
     let required_fields = ["confidence", "category", "actions", "reasoning"]
-    ($required_fields | all {|field| $field in ($data | columns)}) and
-    ($data.confidence >= 0.0) and ($data.confidence <= 1.0) and
-    (($data.actions | describe) == "list")
+    let conditions = [
+        $required_fields | all {|field| $field in ($data | columns)},
+        ($data.actions | describe) == "list"
+    ]
+    $conditions | all {|c| $c}
 }
 
 # =============================================================================
@@ -255,7 +266,7 @@ export def validate-ai-response [data: record] -> bool {
 # =============================================================================
 
 # Standard error response format
-export def error-response [message: string, category: string] -> record {
+export def error-response [message: string, category: string] {
     {
         error: true,
         message: $message,
@@ -265,7 +276,7 @@ export def error-response [message: string, category: string] -> record {
 }
 
 # Standard success response format  
-export def success-response [data: record] -> record {
+export def success-response [data: record] {
     {
         error: false,
         data: $data,

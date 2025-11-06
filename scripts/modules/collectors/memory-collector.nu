@@ -1,15 +1,13 @@
-# Memory Metrics Collector Module  
-# Collects system memory usage metrics with cross-platform compatibility
+# Memory Metrics Collector Module
+# Collects memory usage metrics with cross-platform compatibility
 # Author: Nanai Consys Project
 # Version: 1.0.0
 # Dependencies: nushell sys command
 
-use ../interfaces/schemas.nu
-
 # Collect memory usage metrics
 # Returns: record with total, used, used_pct fields or null on failure
 # Example: let mem_data = (collect-metrics)
-export def collect-metrics [] -> record {
+export def memory_collect_metrics [] {
     try {
         let m = (sys mem)
         let total = (try { $m.total } catch { null })
@@ -34,7 +32,7 @@ export def collect-metrics [] -> record {
 # Validate memory metrics data against expected schema
 # Parameters: data (record) - Memory metrics data to validate
 # Returns: bool - true if data matches schema, false otherwise  
-export def validate-metrics [data: record] -> bool {
+export def validate-metrics [data: record] {
     if ($data == null) {
         return false
     }
@@ -68,7 +66,7 @@ export def validate-metrics [data: record] -> bool {
 
 # Get collector information and metadata
 # Returns: record with collector details
-export def get-collector-info [] -> record {
+export def get-collector-info [] {
     {
         name: "memory-collector",
         version: "1.0.0", 
@@ -82,9 +80,9 @@ export def get-collector-info [] -> record {
 
 # Check if memory collector is available on current system
 # Returns: bool - true if collector can function
-export def is-available [] -> bool {
+export def is-available [] {
     try {
-        sys mem | length
+        sys mem
         return true
     } catch {
         return false  
@@ -93,7 +91,7 @@ export def is-available [] -> bool {
 
 # Collect extended memory metrics with additional details
 # Returns: record with extended memory information
-export def collect-extended-metrics [] -> record {
+export def collect-extended-metrics [] {
     let basic = (collect-metrics)
     if ($basic == null) {
         return null
@@ -119,7 +117,7 @@ export def collect-extended-metrics [] -> record {
 # Calculate memory pressure indicator
 # Parameters: data (record) - Memory metrics data
 # Returns: string - pressure level: "low", "medium", "high", "critical"
-export def calculate-memory-pressure [data: record] -> string {
+export def calculate-memory-pressure [data: record] {
     if ($data == null or $data.used_pct == null) {
         return "unknown"
     }

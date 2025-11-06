@@ -1,21 +1,15 @@
-<<<<<<< HEAD
-# Nushell system metrics monitor (cross-platform)
-# Collects CPU, memory, disk, and optional GPU metrics and writes NDJSON snapshots.
-#ATDS
-=======
 # Nushell system metrics monitor (cross-platform) - Modular Architecture
 # Main orchestrator for the Nanai Consys monitoring system
 # Author: Nanai Consys Project
 # Version: 2.0.0 - Refactored with modular architecture
 # Dependencies: Collector modules, evaluator modules, interface schemas
->>>>>>> bde486c9ab98bac79ef179cb5feb6a2af5dc7c95
 
-use modules/collectors/cpu-collector.nu as cpu
-use modules/collectors/memory-collector.nu as memory  
-use modules/collectors/disk-collector.nu as disk
-use modules/collectors/gpu-collector.nu as gpu
-use modules/collectors/health-assessor.nu as health
-use modules/interfaces/schemas.nu as schemas
+source c:/Users/masak/project/rust/nanai_consys/scripts/modules/collectors/cpu-collector.nu
+source c:/Users/masak/project/rust/nanai_consys/scripts/modules/collectors/memory-collector.nu
+source c:/Users/masak/project/rust/nanai_consys/scripts/modules/collectors/disk-collector.nu
+source c:/Users/masak/project/rust/nanai_consys/scripts/modules/collectors/gpu-collector.nu
+source c:/Users/masak/project/rust/nanai_consys/scripts/modules/collectors/health-assessor.nu
+source c:/Users/masak/project/rust/nanai_consys/scripts/modules/interfaces/schemas.nu
 
 # Main monitoring orchestrator with support for AI evaluation
 export def main [
@@ -71,13 +65,13 @@ export def main [
 }
 
 # Build one snapshot record using modular collectors
-def collect-snapshot [] -> record {
+def collect-snapshot [] {
   let ts = (date now | format date "%+")
-  let cpu_metrics = (cpu collect-metrics)
-  let mem_metrics = (memory collect-metrics)
-  let disk_metrics = (disk collect-metrics)
-  let gpu_metrics = (gpu collect-metrics)
-  let load_level = (health assess-load $cpu_metrics $mem_metrics)
+  let cpu_metrics = (cpu_collect_metrics)
+  let mem_metrics = (memory_collect_metrics)
+  let disk_metrics = (disk_collect_metrics)
+  let gpu_metrics = (gpu_collect_metrics)
+  let load_level = (assess-load $cpu_metrics $mem_metrics)
   
   {
     timestamp: $ts,
@@ -90,10 +84,10 @@ def collect-snapshot [] -> record {
 }
 
 # Load recent historical data for AI evaluation
-def load-recent-history [log_path: string, count: int] -> list {
+def load-recent-history [log_path: string, count: int] {
   try {
     if ($log_path | path exists) {
-      open $log_path | from ndjson | last $count
+      open $log_path | lines | each {|line| $line | from json} | last $count
     } else {
       []
     }
@@ -103,12 +97,12 @@ def load-recent-history [log_path: string, count: int] -> list {
 }
 
 # Evaluate system with AI integration
-def evaluate-with-ai [current: record, history: list] -> record {
+def evaluate-with-ai [current: record, history: list] {
   try {
-    use modules/evaluators/ai-integration.nu as ai
+    source c:/Users/masak/project/rust/nanai_consys/scripts/modules/evaluators/ai-integration.nu
     
     # Prepare evaluation request
-    let context = (ai prepare-evaluation-context $current $history)
+    let context = (prepare-evaluation-context $current $history)
     let request = {
       metrics: $current,
       history: $history,
@@ -116,7 +110,7 @@ def evaluate-with-ai [current: record, history: list] -> record {
     }
     
     # Get AI evaluation
-    let evaluation = (ai evaluate-system $request)
+    let evaluation = (evaluate-system $request)
     
     # Add metadata about the evaluation
     $evaluation | merge {
@@ -128,7 +122,7 @@ def evaluate-with-ai [current: record, history: list] -> record {
     }
   } catch {
     # Fallback to basic health assessment if AI evaluation fails
-    let health_summary = (health generate-health-summary $current)
+    let health_summary = (generate-health-summary $current)
     {
       confidence: 0.5,
       category: "health_assessment_fallback",
@@ -142,76 +136,32 @@ def evaluate-with-ai [current: record, history: list] -> record {
   }
 }
 
-<<<<<<< HEAD
-# GPU usage via vendor tools if available. Returns null if not found.
-def get-gpu [] {
-  # Linux: try nvtop (generic GPU monitor)
-  if ($nu.os-info.name == "linux" and (which nvtop | length) > 0) {
-    let out = (try { run-external "sh" "-c" "timeout 1 nvtop 2>/dev/null | head -20" | complete } catch { null })
-    if ($out != null and $out.exit_code == 0) {
-      let lines = ($out.stdout | lines)
-      let gpu_lines = ($lines | where {|l| $l =~ "Utilization"})
-      let rows = ($gpu_lines | each {|l|
-        # Example: GPU 0: NVIDIA GeForce RTX 3080 [Utilization: 45%]
-        let parts = ($l | split row ":")
-        if (($parts | length) >= 3) {
-          let util_str = ($parts.2 | str trim | str replace "%" "" | str replace "[" "" | str replace "]" "")
-          let util = (try { $util_str | into int } catch { null })
-          { vendor: "nvtop", usage_pct: $util, mem_used_mib: null, mem_total_mib: null, mem_used_pct: null }
-        } else { null }
-      } | where {|x| $x != null })
-      if (($rows | length) > 0) { return $rows }
-    }
-  }
-
-  # Windows: try DXGI-P via PowerShell command
-  if ($nu.os-info.name == "windows") {
-    let out = (try { run-external "powershell" "-Command" "Get-Counter -Counter '\\GPU Engine(*)\\Utilization Percentage' -SampleInterval 1 -MaxSamples 1 -ErrorAction Stop | ForEach-Object { $_.CounterSamples | Select-Object @{Name='usage_pct'; Expression={[math]::Round($_.CookedValue, 2)}}, @{Name='vendor'; Expression={'dxgi'}}, @{Name='mem_used_mib'; Expression={$null}}, @{Name='mem_total_mib'; Expression={$null}}, @{Name='mem_used_pct'; Expression={$null}} } | ConvertTo-Json -Compress" | complete } catch { null })
-    if ($out != null and $out.exit_code == 0 and ($out.stdout | str trim) != "") {
-      let parsed = (try { $out.stdout | from json } catch { null })
-      if ($parsed != null) {
-        # Ensure it's an array
-        let rows = (if ($parsed | describe | str contains "record") { [$parsed] } else { $parsed })
-        return $rows
-      }
-    }
-  }
-
-  # macOS or others without vendor tools: return null
-  null
-=======
 # Legacy compatibility functions - Deprecated, use modular collectors instead
 # These functions are kept for backward compatibility but will be removed in future versions
 
-# @deprecated Use cpu collect-metrics instead  
+# @deprecated Use cpu_collect_metrics instead  
 def get-cpu [] {
-  use modules/collectors/cpu-collector.nu as cpu
-  cpu collect-metrics
->>>>>>> bde486c9ab98bac79ef179cb5feb6a2af5dc7c95
+  cpu_collect_metrics
 }
 
-# @deprecated Use memory collect-metrics instead
+# @deprecated Use memory_collect_metrics instead
 def get-mem [] {
-  use modules/collectors/memory-collector.nu as memory  
-  memory collect-metrics
+  memory_collect_metrics
 }
 
-# @deprecated Use disk collect-metrics instead
+# @deprecated Use disk_collect_metrics instead
 def get-disks [] {
-  use modules/collectors/disk-collector.nu as disk
-  disk collect-metrics  
+  disk_collect_metrics
 }
 
-# @deprecated Use gpu collect-metrics instead
+# @deprecated Use gpu_collect_metrics instead
 def get-gpu [] {
-  use modules/collectors/gpu-collector.nu as gpu
-  gpu collect-metrics
+  gpu_collect_metrics
 }
 
-# @deprecated Use health assess-load instead
-def assess-load [cpu_rec, mem_rec] {
-  use modules/collectors/health-assessor.nu as health
-  health assess-load $cpu_rec $mem_rec
+# @deprecated Use assess-load instead
+def legacy-assess-load [cpu_rec, mem_rec] {
+  assess-load $cpu_rec $mem_rec
 }
 
 # Convenience function: run once and save to default path
