@@ -22,13 +22,21 @@
 - CPU: `sys cpu -l` による per-core 使用率、平均を `usage_pct`
 - Mem: `sys mem` から `used_pct`
 - Disk: `sys disks` から各マウントの `used_pct`
-- GPU: `nvidia-smi` or `rocm-smi` があれば利用（無ければ null）
+- GPU: 直接 API に触るため、スクリプトファイルを除外。Linux では `nvtop` を `timeout` で実行し出力パース、Windows では `run-external` で PowerShell の `Get-Counter` を呼び出し DXGI-P から使用率を取得（メモリ情報なし）。ベンダー固有ツール（nvidia-smi, rocm-smi）は除外し、汎用ツールのみ使用。
 - 機械的判定 `level`: CPU/MEM で 50%/80% を閾値に `low/mid/high`
 
 出力ファイル
 
 - `${nu.data-dir}/nanai_consys/metrics.ndjson`（NDJSON）
 - 同ディレクトリに `last.json`（最新スナップショット）
+
+### GPU 取得の設計理由
+
+GPU 使用率取得では、直接 API に触ることを優先し、スクリプトファイルの依存を避ける。
+
+- **Linux**: `nvtop` を `run-external "sh" "-c" "timeout 1 nvtop ..."` で実行し、出力から Utilization をパース。インタラクティブツールのため timeout で制御。
+- **Windows**: `run-external "powershell" "-Command" "Get-Counter ..."` で DXGI-P (DirectX Graphics Infrastructure Performance) のカウンターを取得。JSON に変換してパース。
+- **除外したもの**: nvidia-smi, rocm-smi などのベンダー固有ツールは、nvtop/DXGI-P でカバー可能であり、依存を減らすため除外。スクリプトファイル（.ps1 など）は、Nushell 内で直接コマンドを実行することで不要化。
 
 ## Nushell による統計前処理の例
 
